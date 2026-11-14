@@ -259,6 +259,58 @@ The response should contain ONLY the list.
 """
 
     @staticmethod
+    def generate_plan_prompt(question: str, max_tasks: int = 5) -> str:
+        """Prompt for the adaptive planner: split the question into verifiable tasks.
+
+        Args:
+            question: The user's original research question.
+            max_tasks: Upper bound on the number of sub-tasks.
+
+        Returns:
+            The planning prompt.
+        """
+        today = datetime.now(timezone.utc).strftime("%B %d, %Y")
+        return f"""You are planning an adaptive research task.
+
+Original research question: "{question}"
+
+Split it into at most {max_tasks} independent research sub-tasks. For each sub-task provide:
+- "query": a plain natural language web search query (never use site:, filetype:, OR, AND or other operators)
+- "goal": one sentence describing what a satisfactory answer must contain, so a reviewer can verify whether the sub-task was covered
+
+Rules:
+- Each sub-task must cover a different aspect; do not repeat the same angle.
+- At least one sub-task must address the question's overall framing.
+- Assume the current date is {today} when freshness matters.
+
+Respond with a JSON array only, for example:
+[{{"query": "search query", "goal": "the answer must contain ..."}}]
+"""
+
+    @staticmethod
+    def generate_gap_query_prompt(deficit: str, claim: str = "") -> str:
+        """Prompt for turning one evaluation gap into concrete search queries.
+
+        Args:
+            deficit: Description of the gap (missing coverage, weak evidence, ...).
+            claim: The claim the gap refers to, when applicable.
+
+        Returns:
+            The gap-resolution prompt.
+        """
+        claim_line = f'\nClaim under investigation: "{claim}"' if claim else ""
+        return f"""A research report has a gap that must be closed.
+
+Gap: {deficit}{claim_line}
+
+Write 1 to 2 plain natural language search queries that are most likely to close this gap.
+Do not use site:, filetype:, OR, AND or other search operators.
+
+Respond with a JSON array of strings only, for example:
+["a precise search query"]
+"""
+
+    @staticmethod
     def generate_report_prompt(
         question: str,
         context,
