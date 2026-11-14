@@ -311,6 +311,57 @@ Respond with a JSON array of strings only, for example:
 """
 
     @staticmethod
+    def generate_support_judge_prompt(claim_lines: str) -> str:
+        """Prompt for judging whether claims are backed by collected evidence.
+
+        Args:
+            claim_lines: Pre-rendered list of claims with their candidate evidence.
+
+        Returns:
+            The judging prompt.
+        """
+        return f"""You audit whether a research report's claims are supported by the evidence that was actually collected.
+
+For every claim below you are given candidate evidence snippets with ids.
+
+Verdicts:
+- "supported": an evidence snippet directly states the claim
+- "weak": an evidence snippet only partially supports it
+- "unsupported": no provided snippet supports it
+
+Return ONLY a JSON array using this exact shape:
+[{{"claim_id": "C1", "verdict": "supported", "evidence_id": "E3", "reason": "short reason"}}]
+
+Use only the evidence ids that are listed for that claim. Never invent ids.
+
+Claims and candidate evidence:
+{claim_lines}
+"""
+
+    @staticmethod
+    def generate_conflict_judge_prompt(claim_lines: str) -> str:
+        """Prompt for detecting directly contradictory claims.
+
+        Args:
+            claim_lines: Pre-rendered list of claims.
+
+        Returns:
+            The conflict-detection prompt.
+        """
+        return f"""You look for direct contradictions between claims from one research report.
+
+Two claims conflict only when they describe the SAME object and the SAME time period but state incompatible facts or numbers.
+Different aspects, different time periods, or one claim being more detailed are NOT conflicts.
+
+Return ONLY a JSON object using this exact shape:
+{{"conflicts": [{{"a": "C1", "b": "C2", "reason": "short reason"}}]}}
+Return {{"conflicts": []}} when there is no conflict.
+
+Claims:
+{claim_lines}
+"""
+
+    @staticmethod
     def generate_report_prompt(
         question: str,
         context,
