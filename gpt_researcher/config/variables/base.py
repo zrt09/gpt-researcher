@@ -50,3 +50,24 @@ class BaseConfig(TypedDict):
     IMAGE_GENERATION_ENABLED: bool
     IMAGE_GENERATION_STYLE: str  # Image style: "dark", "light", or "auto"
     IMAGE_GENERATION_PROVIDER: str  # Image provider: "google" or "modelslab"
+
+    # Adaptive research settings (disabled by default)
+    ADAPTIVE_ENABLED: bool
+    ADAPTIVE_MAX_ROUNDS: int
+    ADAPTIVE_MAX_LLM_CALLS: int
+    ADAPTIVE_MAX_TOKENS: int
+    ADAPTIVE_MAX_SECONDS: int
+    ADAPTIVE_MAX_COST_USD: float
+    ADAPTIVE_MAX_TASKS: int
+    ADAPTIVE_MAX_TASKS_PER_ROUND: int
+    ADAPTIVE_CONCURRENCY: int
+    ADAPTIVE_EVAL_MODE: str
+    ADAPTIVE_MIN_COVERAGE: float
+    ADAPTIVE_MIN_SUPPORT_RATE: float
+    ADAPTIVE_MIN_CITATION_MATCH: float
+    ADAPTIVE_MIN_COMPLETENESS: float
+    ADAPTIVE_MAX_CONFLICT: float
+    ADAPTIVE_NO_PROGRESS_ROUNDS: int
+    ADAPTIVE_VALIDITY_SAMPLE: int
+    ADAPTIVE_FRESHNESS_MONTHS: int
+    ADAPTIVE_STATE_DIR: str

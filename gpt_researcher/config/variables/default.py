@@ -56,4 +56,27 @@ DEFAULT_CONFIG: BaseConfig = {
     "IMAGE_GENERATION_ENABLED": False,  # Master switch for inline image generation
     "IMAGE_GENERATION_STYLE": "dark",  # Image style: "dark" (matches app theme), "light", or "auto"
     "IMAGE_GENERATION_PROVIDER": "google",  # Image provider: "google" or "modelslab"
+
+    # Adaptive research settings (see docs/改造方案/05_改造后总体架构设计.md)
+    # Disabled by default: the original one-shot pipeline is unchanged unless
+    # ADAPTIVE_ENABLED=true is set explicitly.
+    "ADAPTIVE_ENABLED": False,
+    "ADAPTIVE_MAX_ROUNDS": 3,
+    "ADAPTIVE_MAX_LLM_CALLS": 120,
+    "ADAPTIVE_MAX_TOKENS": 300000,
+    "ADAPTIVE_MAX_SECONDS": 900,
+    "ADAPTIVE_MAX_COST_USD": 0.15,
+    "ADAPTIVE_MAX_TASKS": 8,
+    "ADAPTIVE_MAX_TASKS_PER_ROUND": 4,
+    "ADAPTIVE_CONCURRENCY": 3,
+    "ADAPTIVE_EVAL_MODE": "light",  # light = zero-cost metrics only; full = adds LLM judging
+    "ADAPTIVE_MIN_COVERAGE": 0.80,
+    "ADAPTIVE_MIN_SUPPORT_RATE": 0.85,
+    "ADAPTIVE_MIN_CITATION_MATCH": 0.80,
+    "ADAPTIVE_MIN_COMPLETENESS": 0.90,
+    "ADAPTIVE_MAX_CONFLICT": 0.10,
+    "ADAPTIVE_NO_PROGRESS_ROUNDS": 2,
+    "ADAPTIVE_VALIDITY_SAMPLE": 20,
+    "ADAPTIVE_FRESHNESS_MONTHS": 24,
+    "ADAPTIVE_STATE_DIR": "outputs/adaptive",
 }
