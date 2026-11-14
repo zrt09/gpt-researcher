@@ -8,12 +8,12 @@ than failing the whole run. All network/LLM access goes through an injectable
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from typing import Any, Awaitable, Callable
 
 import json_repair
+from rapidfuzz import fuzz
 
 from ..config import Config
 from ..prompts import PromptFamily, get_prompt_family
@@ -23,6 +23,21 @@ from .state import SubTask, TaskOrigin
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_TASKS = 6
+DEDUPE_THRESHOLD = 85.0
+# Ordered longest-first so "有哪些" is removed before "哪些".
+_CJK_FILLERS = (
+    "有哪些",
+    "是什么",
+    "为什么",
+    "怎么样",
+    "哪些",
+    "哪些",
+    "如何",
+    "的",
+    "了",
+    "吗",
+    "呢",
+)
 _FENCE_RE = re.compile(r"```(?:json)?\s*(?P<payload>[\s\S]*?)```", re.IGNORECASE)
 _ARRAY_RE = re.compile(r"\[[\s\S]*\]")
 _OBJECT_RE = re.compile(r"\{[\s\S]*\}")
@@ -171,3 +186,71 @@ class Planner:
             if match:
                 highest = max(highest, int(match.group(1)))
         return f"T{highest + 1}"
+
+    # --------------------------------------------------------------- dedupe
+    @staticmethod
+    def normalize_query(text: str) -> str:
+        """Lower-case, strip punctuation and filler words, keep words/CJK."""
+        text = (text or "").lower()
+        text = re.sub(r"[^\w\s\u4e00-\u9fff]+", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        # Chinese questions differ mostly by filler ("有哪些", "的"); removing it
+        # is what makes "RAG 系统的局限" and "RAG 系统有哪些局限" compare equal.
+        for filler in _CJK_FILLERS:
+            text = text.replace(filler, "")
+        return re.sub(r"\s+", " ", text).strip()
+
+    @classmethod
+    def query_similarity(cls, left: str, right: str) -> float:
+        """0..100 similarity between two research queries."""
+        a, b = cls.normalize_query(left), cls.normalize_query(right)
+        if not a or not b:
+            return 0.0
+        if a == b:
+            return 100.0
+        return float(fuzz.token_set_ratio(a, b))
+
+    def dedupe(
+        self,
+        candidates: list[SubTask],
+        existing: list[SubTask],
+        threshold: float = DEDUPE_THRESHOLD,
+    ) -> list[SubTask]:
+        """Drop candidate tasks that repeat an existing or already-kept task.
+
+        A duplicate is not wasted information: its goal is merged into the kept
+        task so the plan becomes slightly more specific instead of wider.
+        """
+        kept: list[SubTask] = []
+        pool: list[SubTask] = list(existing)
+        for candidate in candidates:
+            match = self._find_duplicate(candidate, pool, threshold)
+            if match is not None:
+                self._merge_goal(match, candidate.goal)
+                logger.debug(
+                    "adaptive planner dropped duplicate task %r (similar to %s)",
+                    candidate.query,
+                    match.id,
+                )
+                continue
+            pool.append(candidate)
+            kept.append(candidate)
+        return kept
+
+    def _find_duplicate(
+        self, candidate: SubTask, pool: list[SubTask], threshold: float
+    ) -> SubTask | None:
+        best: SubTask | None = None
+        best_score = threshold
+        for item in pool:
+            score = self.query_similarity(candidate.query, item.query)
+            if score >= best_score:
+                best, best_score = item, score
+        return best
+
+    @staticmethod
+    def _merge_goal(target: SubTask, extra: str) -> None:
+        extra = (extra or "").strip()
+        if not extra or extra in (target.goal or ""):
+            return
+        target.goal = f"{target.goal}；{extra}" if target.goal else extra

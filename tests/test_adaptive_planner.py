@@ -99,3 +99,57 @@ def test_next_task_id_is_monotonic():
     existing = [SubTask(id="T2", query="a", goal="g"), SubTask(id="T7", query="b", goal="g")]
     assert Planner.next_task_id(existing) == "T8"
     assert Planner.next_task_id([]) == "T1"
+
+
+# --- T08: de-duplication -----------------------------------------------------
+
+
+def test_normalize_query_strips_punctuation_and_lowercases(planner):
+    assert Planner.normalize_query("  RAG's limits?!  ") == "rag s limits"
+
+
+def test_dedupe_drops_duplicate_and_merges_goal(planner):
+    existing = [SubTask(id="T1", query="RAG systems limitations", goal="list three limitations")]
+    candidate = SubTask(id="T2", query="limitations of RAG systems", goal="cite sources")
+
+    kept = planner.dedupe([candidate], existing)
+
+    assert kept == []
+    assert "list three limitations" in existing[0].goal
+    assert "cite sources" in existing[0].goal
+
+
+def test_dedupe_keeps_a_different_angle(planner):
+    existing = [SubTask(id="T1", query="RAG limitations", goal="g")]
+    candidate = SubTask(id="T2", query="vector database pricing comparison", goal="g2")
+
+    assert planner.dedupe([candidate], existing) == [candidate]
+
+
+def test_dedupe_applies_between_candidates(planner):
+    first = SubTask(id="T1", query="rag evaluation benchmarks", goal="g1")
+    second = SubTask(id="T2", query="benchmarks for rag evaluation", goal="g2")
+
+    kept = planner.dedupe([first, second], [])
+
+    assert len(kept) == 1
+    assert "g2" in kept[0].goal
+
+
+def test_dedupe_handles_chinese_queries(planner):
+    existing = [SubTask(id="T1", query="RAG 系统的局限", goal="列出三类局限")]
+    candidate = SubTask(id="T2", query="RAG 系统有哪些局限", goal="给出出处")
+
+    kept = planner.dedupe([candidate], existing)
+
+    assert kept == []
+    assert "给出出处" in existing[0].goal
+
+
+def test_dedupe_threshold_is_configurable(planner):
+    existing = [SubTask(id="T1", query="rag limitations", goal="g")]
+    candidate = SubTask(id="T2", query="rag limitations and costs", goal="g2")
+
+    assert planner.dedupe([candidate], existing, threshold=101) == [candidate]
+    assert planner.dedupe([candidate], existing, threshold=50) == []
+
