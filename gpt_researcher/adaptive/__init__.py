@@ -4,6 +4,7 @@ Public entry point will be :class:`AdaptiveResearcher`; until it lands, this
 package exposes the state/budget primitives it is built from.
 """
 
+from .budget import BudgetController, Usage
 from .state import (
     BudgetState,
     Claim,
@@ -24,6 +25,7 @@ from .state import (
 )
 
 __all__ = [
+    "BudgetController",
     "BudgetState",
     "Claim",
     "Deficit",

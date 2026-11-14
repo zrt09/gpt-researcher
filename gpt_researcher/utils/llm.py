@@ -38,6 +38,53 @@ def get_llm(llm_provider: str, **kwargs):
     return GenericLLMProvider.from_provider(llm_provider, **kwargs)
 
 
+def _estimate_tokens(text: str) -> int:
+    """Token estimate used only when a provider reports no usage metadata."""
+    if not text:
+        return 0
+    try:
+        import tiktoken
+
+        return len(tiktoken.get_encoding("o200k_base").encode(text))
+    except Exception:  # noqa: BLE001 - estimation is best effort
+        return max(1, len(text) // 4)
+
+
+def _report_usage(
+    usage_sink,
+    *,
+    provider,
+    llm_provider,
+    model,
+    messages,
+    response,
+    cost_usd,
+) -> None:
+    """Hand one call's usage to ``usage_sink`` as keyword arguments.
+
+    The adaptive layer wraps this into its own ``Usage`` dataclass, so the core
+    package never has to import ``gpt_researcher.adaptive``.
+    """
+    try:
+        meta = provider.last_usage_metadata or {}
+        input_tokens = int(meta.get("input_tokens") or meta.get("prompt_tokens") or 0)
+        output_tokens = int(meta.get("output_tokens") or meta.get("completion_tokens") or 0)
+        estimated = not meta
+        if estimated:
+            input_tokens = _estimate_tokens(str(messages))
+            output_tokens = _estimate_tokens(response or "")
+        usage_sink(
+            provider=llm_provider or "",
+            model=model or "",
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=float(cost_usd or 0.0),
+            estimated=estimated,
+        )
+    except Exception as exc:  # noqa: BLE001 - telemetry must never break research
+        logging.getLogger(__name__).warning("usage_sink failed: %s", exc)
+
+
 async def create_chat_completion(
         messages: list[dict[str, str]],
         model: str | None = None,
@@ -48,6 +95,7 @@ async def create_chat_completion(
         websocket: Any | None = None,
         llm_kwargs: dict[str, Any] | None = None,
         cost_callback: callable = None,
+        usage_sink: callable = None,
         reasoning_effort: str | None = ReasoningEfforts.Medium.value,
         **kwargs
 ) -> str:
@@ -62,6 +110,10 @@ async def create_chat_completion(
         websocket (WebSocket): The websocket used in the current request,
         llm_kwargs (dict[str, Any], optional): Additional LLM keyword arguments. Defaults to None.
         cost_callback: Callback function for updating cost.
+        usage_sink: Optional callable receiving keyword arguments
+            ``provider/model/input_tokens/output_tokens/cost_usd/estimated``
+            for every call. Used by the adaptive loop's budget accounting;
+            failures inside the sink never interrupt the call.
         reasoning_effort (str, optional): Reasoning effort for OpenAI's reasoning models. Defaults to 'low'.
         **kwargs: Additional keyword arguments.
     Returns:
@@ -136,7 +188,8 @@ async def create_chat_completion(
 
         # A provider can bill a completed request that returns empty content
         # after spending its budget on reasoning, so account for every call.
-        if cost_callback:
+        llm_costs = 0.0
+        if cost_callback or usage_sink:
             llm_costs = calculate_llm_cost(
                 llm_provider=llm_provider,
                 model=model,
@@ -146,7 +199,18 @@ async def create_chat_completion(
                 usage_metadata=provider.last_usage_metadata,
                 request_options=provider_kwargs,
             )
+        if cost_callback:
             cost_callback(llm_costs)
+        if usage_sink:
+            _report_usage(
+                usage_sink,
+                provider=provider,
+                llm_provider=llm_provider,
+                model=model,
+                messages=messages,
+                response=response,
+                cost_usd=llm_costs,
+            )
 
         if not response:
             last_exception = RuntimeError("Empty response from LLM provider")
