@@ -78,6 +78,22 @@ def test_coverage_none_without_tasks():
     assert compute_coverage(state, []).value is None
 
 
+def test_coverage_accepts_a_cited_source_from_the_task():
+    """A section can answer a task without reusing its wording."""
+    state = ResearchState(
+        run_id="r",
+        query="q",
+        plan=[_task("T1"), _task("T2")],
+        evidence=[_evidence("E1", url="https://a.com/x")],
+    )
+    claims = [Claim(id="C1", text="t", section="s", cited_urls=["https://a.com/x"])]
+
+    metric = compute_coverage(state, claims)
+
+    assert metric.value == 0.5
+    assert "T1" not in metric.notes
+
+
 def test_citation_match_uses_normalized_urls():
     claims = [
         Claim(id="C1", text="t", section="s", cited_urls=["https://a.com/x/"]),

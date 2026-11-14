@@ -73,9 +73,11 @@ class FakePlanner:
 class FakeExecutor:
     def __init__(self):
         self.runs = 0
+        self.calls = []
 
     async def run_task(self, task, *, round_no=1, agent=None, role=None):
         self.runs += 1
+        self.calls.append({"agent": agent, "role": role})
         return TaskResult(
             task_id=task.id,
             status=TaskStatus.DONE,
@@ -216,6 +218,16 @@ async def test_persistence_writes_state_and_report_versions(tmp_path):
     assert saved["status"] == "completed"
 
 
+async def test_quality_met_on_the_last_allowed_round_is_completed():
+    evaluator = FakeEvaluator([make_evaluation(True, coverage=1.0)])
+    adaptive = build(evaluator=evaluator, max_rounds=1)
+
+    result = await adaptive.run()
+
+    assert result.status is RunStatus.COMPLETED
+    assert result.stop_reason is StopReason.QUALITY_MET
+
+
 async def test_rounds_record_tasks_and_evidence():
     evaluator = FakeEvaluator([make_evaluation(True, coverage=1.0)])
     adaptive = build(evaluator=evaluator)
@@ -227,3 +239,70 @@ async def test_rounds_record_tasks_and_evidence():
     assert record.new_evidence == 2
     assert record.evaluation is not None
     assert result.state.budget.rounds == len(result.state.rounds)
+
+
+async def test_claims_are_copied_into_state():
+    evaluator = FakeEvaluator([make_evaluation(True, coverage=1.0)])
+    adaptive = build(evaluator=evaluator)
+
+    result = await adaptive.run()
+
+    assert result.state.claims == list(result.evaluation.claims)
+
+
+async def test_executor_receives_the_shared_role():
+    executor = FakeExecutor()
+    evaluator = FakeEvaluator([make_evaluation(True, coverage=1.0)])
+    adaptive = build(executor=executor, evaluator=evaluator)
+
+    await adaptive.run()
+
+    assert executor.calls
+    assert all(call["agent"] == "researcher" for call in executor.calls)
+    assert all(call["role"] for call in executor.calls)
+
+
+class BrokenWriter:
+    async def __call__(self, state, notes):
+        raise RuntimeError("writer down")
+
+
+async def test_writer_failure_degrades_to_evidence_digest():
+    adaptive = build(
+        writer=BrokenWriter(),
+        evaluator=FakeEvaluator([make_evaluation(False, coverage=0.0)]),
+        max_rounds=1,
+    )
+
+    result = await adaptive.run()
+
+    assert result.report.strip()
+    assert "自动生成" in result.report
+    assert result.status is RunStatus.PARTIAL
+    assert any("写作模型不可用" in q for q in result.state.open_questions)
+
+
+def test_evidence_context_is_bounded():
+    from gpt_researcher.adaptive.orchestrator import AdaptiveResearcher
+
+    evidence = [
+        Evidence(
+            id=f"E{i}",
+            task_id="T1",
+            url=f"https://e.com/{i}",
+            title="t",
+            snippet="x" * 2000,
+            query="q",
+            round=1,
+            fetched_at="now",
+        )
+        for i in range(40)
+    ]
+    state = ResearchState(
+        run_id="r", query="q", plan=[SubTask(id="T1", query="q1", goal="g1")], evidence=evidence
+    )
+
+    context = AdaptiveResearcher._evidence_context(state, [], max_items=6, snippet_chars=100)
+
+    assert context.count("\n- ") <= 6
+    assert "x" * 200 not in context

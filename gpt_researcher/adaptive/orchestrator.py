@@ -123,6 +123,11 @@ class AdaptiveResearcher:
             getattr(self.cfg, "prompt_family", "default"), self.cfg
         )
         self.writer: WriterCall = writer or self._default_writer
+        # A fixed role lets every sub-task skip its own choose_agent LLM call.
+        # (One call per task is pure overhead when the parent already knows the
+        # domain; the adaptive loop can still override these explicitly.)
+        self.agent = "researcher"
+        self.role = DEFAULT_ROLE_PROMPT
         self.max_tasks_per_round = int(
             getattr(self.cfg, "adaptive_max_tasks_per_round", 4)
         )
@@ -130,6 +135,7 @@ class AdaptiveResearcher:
         self.state_dir = state_dir or str(getattr(self.cfg, "adaptive_state_dir", "outputs/adaptive"))
         self.directory: str | None = None
         self._pending_notes: list[str] = []
+        self._writer_degraded = False
 
     # ------------------------------------------------------------------ public
     async def run(self, on_round: Callable[[RoundRecord], None] | None = None) -> AdaptiveResult:
@@ -164,6 +170,7 @@ class AdaptiveResearcher:
                 state, report, mode=self.eval_mode, round_no=round_no
             )
             state.latest_evaluation = evaluation
+            state.claims = list(evaluation.claims)
 
             record = RoundRecord(
                 round=round_no,
@@ -280,7 +287,9 @@ class AdaptiveResearcher:
 
         async def one(task: SubTask):
             async with semaphore:
-                return await self.executor.run_task(task, round_no=round_no)
+                return await self.executor.run_task(
+                    task, round_no=round_no, agent=self.agent, role=self.role
+                )
 
         results = await asyncio.gather(*[one(t) for t in tasks], return_exceptions=True)
         clean = []
@@ -320,18 +329,109 @@ class AdaptiveResearcher:
 
     async def _write(self) -> str:
         try:
-            return await self.writer(self.state, list(self._pending_notes))
+            report = await self.writer(self.state, list(self._pending_notes))
         except Exception as exc:  # noqa: BLE001 - keep the previous report
             logger.error("adaptive writer failed: %s", exc)
-            return self.state.report or ""
+            report = self.state.report or ""
+        if report.strip():
+            return report
+        # Never hand an empty report to the evaluator: a deterministic digest of
+        # the collected evidence is degraded, but it is honest and it keeps the
+        # run's stop reason meaningful.
+        self._writer_degraded = True
+        logger.warning("adaptive writer produced no text; using evidence digest")
+        return self._digest_report(self.state)
+
+    @staticmethod
+    def _digest_report(state: ResearchState) -> str:
+        lines = [
+            f"# {state.query}",
+            "",
+            "## Introduction",
+            "",
+            "> 自动生成：写作模型本次不可用，以下为已收集证据的结构化摘要，未经撰写加工。",
+            "",
+        ]
+        for task in state.plan:
+            items = [e for e in state.evidence if e.task_id == task.id]
+            if not items:
+                continue
+            lines += [f"## {task.goal}", ""]
+            for item in items[:4]:
+                lines.append(f"- {item.title or item.url}: {item.snippet[:400]} ({item.url})")
+            lines.append("")
+        lines += ["## Conclusion", "", "写作模型不可用，未能生成结论。", "", "## References", ""]
+        urls = []
+        for evidence in state.evidence:
+            if evidence.url and evidence.url not in urls:
+                urls.append(evidence.url)
+        lines += [f"- {url}" for url in urls[:40]] or ["- （无）"]
+        return "\n".join(lines)
+
+    async def _default_writer(self, state: ResearchState, notes: list[str]) -> str:
+        from ..actions.report_generation import generate_report
+
+        attempts = ((24, 600), (10, 400))
+        last_error: Exception | None = None
+        for max_items, snippet_chars in attempts:
+            context = self._evidence_context(
+                state, notes, max_items=max_items, snippet_chars=snippet_chars
+            )
+            try:
+                return await generate_report(
+                    query=state.query,
+                    context=context,
+                    agent_role_prompt=DEFAULT_ROLE_PROMPT,
+                    report_type=ReportType.ResearchReport.value,
+                    tone=Tone.Objective,
+                    report_source="web",
+                    websocket=self.websocket,
+                    cfg=self.cfg,
+                    prompt_family=self.prompt_family,
+                )
+            except Exception as exc:  # noqa: BLE001 - retry smaller, then degrade
+                last_error = exc
+                logger.warning(
+                    "adaptive writer attempt failed (max_items=%s): %s", max_items, exc
+                )
+        raise last_error or RuntimeError("writer failed")
+
+    @staticmethod
+    def _evidence_context(
+        state: ResearchState,
+        notes: list[str],
+        max_items: int = 24,
+        snippet_chars: int = 600,
+    ) -> str:
+        blocks: list[str] = []
+        budget = max_items
+        for task in state.plan:
+            if budget <= 0:
+                break
+            items = [e for e in state.evidence if e.task_id == task.id][: max(1, budget // 4 or 1)]
+            if not items:
+                continue
+            blocks.append(f"### {task.goal}")
+            for item in items:
+                budget -= 1
+                blocks.append(
+                    f"- {item.title} ({item.url}): {item.snippet[:snippet_chars]}"
+                )
+            if budget <= 0:
+                break
+        context = "\n".join(blocks) or "（暂无证据）"
+        if notes:
+            context += "\n\n修订要求（上一轮评估发现的问题）：\n" + "\n".join(
+                f"- {note}" for note in notes
+            )
+        return context
 
     def _stop_reason(self, evaluation: EvaluationResult) -> StopReason | None:
-        exhausted = self.budget.exhaust_reason()
-        if exhausted is not None:
-            return exhausted
+        # Quality first: meeting the gate on the last allowed round must count as
+        # success, not as "budget exhausted".
         if evaluation.passed:
             return StopReason.QUALITY_MET
-        return None
+        return self.budget.exhaust_reason()
 
     def _finish(self, evaluation: EvaluationResult | None) -> AdaptiveResult:
         state = self.state
@@ -346,7 +446,13 @@ class AdaptiveResearcher:
             status = RunStatus.PARTIAL
 
         state.status = status
-        state.open_questions = self._open_questions(evaluation)
+        questions = self._open_questions(evaluation)
+        if self._writer_degraded:
+            if status is RunStatus.COMPLETED:
+                status = RunStatus.PARTIAL
+                state.status = status
+            questions.insert(0, "写作模型不可用：最终报告为证据摘要，而非撰写结果")
+        state.open_questions = questions
         final_report = build_final_report(
             state,
             state.report or "",
@@ -431,36 +537,3 @@ class AdaptiveResearcher:
             await emit_research_event(self.observer, event, **fields)
         except Exception:  # noqa: BLE001 - telemetry is optional
             logger.debug("adaptive observer failed for %s", event)
-
-    async def _default_writer(self, state: ResearchState, notes: list[str]) -> str:
-        from ..actions.report_generation import generate_report
-
-        context = self._evidence_context(state, notes)
-        return await generate_report(
-            query=state.query,
-            context=context,
-            agent_role_prompt=DEFAULT_ROLE_PROMPT,
-            report_type=ReportType.ResearchReport.value,
-            tone=Tone.Objective,
-            report_source="web",
-            websocket=self.websocket,
-            cfg=self.cfg,
-            prompt_family=self.prompt_family,
-        )
-
-    @staticmethod
-    def _evidence_context(state: ResearchState, notes: list[str]) -> str:
-        blocks: list[str] = []
-        for task in state.plan:
-            items = [e for e in state.evidence if e.task_id == task.id]
-            if not items:
-                continue
-            blocks.append(f"### {task.goal}")
-            for item in items:
-                blocks.append(f"- {item.title} ({item.url}): {item.snippet}")
-        context = "\n".join(blocks) or "（暂无证据）"
-        if notes:
-            context += "\n\n修订要求（上一轮评估发现的问题）：\n" + "\n".join(
-                f"- {note}" for note in notes
-            )
-        return context

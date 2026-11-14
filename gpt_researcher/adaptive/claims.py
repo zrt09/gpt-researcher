@@ -109,7 +109,9 @@ def _sentences(body: str) -> list[str]:
 def _clean(text: str) -> str:
     text = re.sub(r"[*_`]+", "", text)
     text = re.sub(r"^\s*(?:[-+*]|\d+[.)])\s+", "", text)
-    text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text)
+    # Keep the URL: markdown links are the only place some reports carry their
+    # citations, and dropping them makes citation matching always fail.
+    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 \2", text)
     return re.sub(r"\s+", " ", text).strip()
 
 

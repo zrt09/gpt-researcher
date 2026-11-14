@@ -96,3 +96,15 @@ def test_max_claims_is_enforced():
 def test_short_sentences_are_ignored():
     claims = extract_claims("## X\n\nToo short.\n")
     assert claims == []
+
+
+def test_markdown_links_keep_their_url():
+    report = (
+        "## Findings\n\n"
+        "Retrieval failures dominate the error budget in production deployments "
+        "([Barnett, 2024](https://arxiv.org/html/2401.05856v1)).\n"
+    )
+    claims = extract_claims(report)
+    assert claims
+    assert claims[0].cited_urls == ["https://arxiv.org/html/2401.05856v1"]
+    assert "https://arxiv.org/html/2401.05856v1" in claims[0].text

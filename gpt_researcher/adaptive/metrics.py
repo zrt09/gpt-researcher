@@ -79,15 +79,33 @@ def _dedupe(values: Sequence[str]) -> list[str]:
 
 
 def compute_coverage(state: ResearchState, claims: Sequence[Claim]) -> MetricResult:
-    """Share of planned (non-skipped) tasks that are done AND answered."""
+    """Share of planned (non-skipped) tasks that are done AND answered.
+
+    A task counts as covered when either its id is attributed to a claim, or the
+    report cites a URL that this task actually collected. The URL path matters:
+    lexical attribution is a conservative lower bound, and a report section can
+    answer a task without reusing the task's wording.
+    """
     tasks = [t for t in state.plan if t.status is not TaskStatus.SKIPPED]
     if not tasks:
         return MetricResult(name="coverage", value=None, notes="no_tasks")
 
-    covered_task_ids = {task_id for claim in claims for task_id in claim.task_ids}
-    covered = [
-        t for t in tasks if t.status is TaskStatus.DONE and t.id in covered_task_ids
-    ]
+    task_urls: dict[str, set[str]] = {}
+    for evidence in state.evidence:
+        if evidence.url:
+            task_urls.setdefault(evidence.task_id, set()).add(normalize_url(evidence.url))
+
+    covered_ids: set[str] = set()
+    for claim in claims:
+        covered_ids.update(claim.task_ids)
+        cited = {normalize_url(url) for url in claim.cited_urls}
+        if not cited:
+            continue
+        for task_id, urls in task_urls.items():
+            if cited & urls:
+                covered_ids.add(task_id)
+
+    covered = [t for t in tasks if t.status is TaskStatus.DONE and t.id in covered_ids]
     uncovered = [t.id for t in tasks if t.id not in {c.id for c in covered}]
     return MetricResult(
         name="coverage",
