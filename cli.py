@@ -67,11 +67,25 @@ cli.add_argument(
     ),
     # Deserialize ReportType as a List of strings:
     choices=choices,
-    required=True)
+    required=False)
 
 # =====================================
 # Arg: Tone
 # =====================================
+
+cli.add_argument(
+    "--adaptive",
+    action="store_true",
+    help="Use the adaptive research loop (plan -> research -> evaluate -> reflect).\n"
+         "Requires ADAPTIVE_* settings; the classic pipeline stays the default.",
+)
+
+cli.add_argument(
+    "--adaptive_rounds",
+    type=int,
+    default=None,
+    help="Override ADAPTIVE_MAX_ROUNDS for this run (only with --adaptive).",
+)
 
 cli.add_argument(
     "--tone",
@@ -269,9 +283,29 @@ async def main(args):
     """
     query_domains = args.query_domains.split(",") if args.query_domains else []
 
+    if not getattr(args, "adaptive", False) and not args.report_type:
+        cli.error("--report_type is required unless --adaptive is used")
+
     researcher: GPTResearcher | None = None
 
-    if args.report_type == 'detailed_report':
+    if getattr(args, "adaptive", False):
+        from types import SimpleNamespace
+
+        from gpt_researcher.adaptive import AdaptiveResearcher
+
+        print("Adaptive mode: plan -> research -> evaluate -> reflect")
+        adaptive = AdaptiveResearcher(query=args.query, max_rounds=args.adaptive_rounds)
+        result = await adaptive.run()
+        report = result.report
+        print(f"Adaptive run finished: status={result.status.value} reason={result.stop_reason}")
+        # The CLI title/frontmatter helpers only need cfg, costs and visited URLs.
+        researcher = SimpleNamespace(
+            cfg=adaptive.cfg,
+            visited_urls=result.state.visited_urls,
+            add_costs=lambda cost: None,
+            get_costs=lambda: result.state.budget.cost_usd,
+        )
+    elif args.report_type == 'detailed_report':
         detailed_report = DetailedReport(
             query=args.query,
             query_domains=query_domains,
