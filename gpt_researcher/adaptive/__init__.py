@@ -5,6 +5,7 @@ package exposes the state/budget primitives it is built from.
 """
 
 from .budget import BudgetController, Usage
+from .orchestrator import AdaptiveResearcher, AdaptiveResult
 from .state import (
     BudgetState,
     Claim,
@@ -25,6 +26,8 @@ from .state import (
 )
 
 __all__ = [
+    "AdaptiveResearcher",
+    "AdaptiveResult",
     "BudgetController",
     "BudgetState",
     "Claim",
