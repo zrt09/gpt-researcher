@@ -172,6 +172,9 @@ class GPTResearcher:
         self._current_step: str = "general"
         self.log_handler = log_handler
         self.research_observer = research_observer
+        # Optional hooks used by the adaptive loop; they are plain attributes so
+        # the public constructor signature stays unchanged.
+        self.artifact_sink = None
         self.prompt_family = get_prompt_family(prompt_family or self.cfg.prompt_family, self.cfg)
         
         # Process MCP configurations if provided
@@ -305,7 +308,7 @@ class GPTResearcher:
         Adds the MCP retriever to the active retriever list by modifying
         self.cfg.retrievers directly.  Deliberately avoids touching os.environ
         so that concurrent or subsequent requests are not affected by this
-        session's MCP settings (fixes issue #1676 – process-level env pollution).
+        session's MCP settings (fixes issue #1676 鈥?process-level env pollution).
 
         Args:
             mcp_configs (list[dict]): List of MCP server configuration dictionaries.
@@ -814,3 +817,4 @@ class GPTResearcher:
                 "total_cost": self.research_costs,
                 "step_name": step,
             })
+

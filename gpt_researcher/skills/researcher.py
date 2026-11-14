@@ -6,6 +6,7 @@ and context gathering.
 """
 
 import asyncio
+import inspect
 import logging
 import os
 import random
@@ -47,6 +48,10 @@ class ResearchConductor:
         self._mcp_cache_lock = asyncio.Lock()
         # Track MCP query count for balanced mode
         self._mcp_query_count = 0
+        # Last research error. Kept so callers (e.g. the adaptive executor) can
+        # tell "no results" apart from "the run failed" without changing any
+        # return type. Reset at the start of every conduct_research() call.
+        self.last_error: Exception | None = None
 
     async def _emit_research_event(self, event: str, **fields) -> None:
         """Emit through an optional observer without requiring GPTResearcher."""
@@ -55,6 +60,27 @@ class ResearchConductor:
             event,
             **fields,
         )
+
+    async def _emit_artifact(self, sub_query, pages, compressed, stage: str) -> None:
+        """Hand raw research artifacts to an optional sink.
+
+        Used by the adaptive executor to build structured evidence. A sink
+        failure must never break research, so it is logged and swallowed.
+        """
+        sink = getattr(self.researcher, "artifact_sink", None)
+        if sink is None:
+            return
+        try:
+            result = sink(
+                sub_query=sub_query,
+                pages=pages,
+                compressed=compressed,
+                stage=stage,
+            )
+            if inspect.isawaitable(result):
+                await result
+        except Exception as exc:  # noqa: BLE001 - telemetry must not break research
+            self.logger.warning("artifact_sink failed for %s: %s", stage, exc)
 
     async def _get_initial_search_results(self, query, query_domains=None):
         await stream_output(
@@ -120,6 +146,7 @@ class ResearchConductor:
 
     async def conduct_research(self):
         """Runs the GPT Researcher to conduct research"""
+        self.last_error = None
         if self.json_handler:
             self.json_handler.update_content("query", self.researcher.query)
         
@@ -429,6 +456,12 @@ class ResearchConductor:
             return []
         except Exception as e:
             self.logger.error(f"Error during web search: {e}", exc_info=True)
+            self.last_error = e
+            await self._emit_research_event(
+                "research_failed",
+                reason_code=type(e).__name__,
+                stage="web_search",
+            )
             return []
 
     def _get_mcp_strategy(self) -> str:
@@ -635,6 +668,7 @@ class ResearchConductor:
             if scraped_data:
                 web_context = await self.researcher.context_manager.get_similar_content_by_query(sub_query, scraped_data)
                 self.logger.info(f"Web content found for sub-query: {len(str(web_context)) if web_context else 0} chars")
+                await self._emit_artifact(sub_query, scraped_data, web_context, "compressed")
 
             # Combine MCP context with web context intelligently
             combined_context = self._combine_mcp_and_web_context(mcp_context, web_context, sub_query)
@@ -677,6 +711,7 @@ class ResearchConductor:
             
         except Exception as e:
             self.logger.error(f"Error processing sub-query {sub_query}: {e}", exc_info=True)
+            self.last_error = e
             if self.researcher.verbose:
                 await stream_output(
                     "logs",
@@ -1053,6 +1088,7 @@ class ResearchConductor:
         if self.researcher.vector_store:
             self.researcher.vector_store.load(scraped_content)
 
+        await self._emit_artifact(sub_query, scraped_content, None, "scrape")
         return scraped_content
 
     async def _search(self, retriever, query):

@@ -9,6 +9,7 @@ import logging
 import os
 from typing import Any
 import asyncio
+from contextvars import ContextVar
 
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import PromptTemplate
@@ -22,6 +23,20 @@ from gpt_researcher.llm_provider.generic.base import (
 from ..prompts import PromptFamily
 from .costs import calculate_llm_cost
 from .validators import Subtopics
+
+# The adaptive loop sets a task-scoped sink instead of threading one through
+# every call site (the public GPTResearcher signature must stay stable).
+_ACTIVE_USAGE_SINK: ContextVar[Any] = ContextVar("active_usage_sink", default=None)
+
+
+def set_active_usage_sink(sink) -> Any:
+    """Install a context-local usage sink and return the reset token."""
+    return _ACTIVE_USAGE_SINK.set(sink)
+
+
+def reset_active_usage_sink(token) -> None:
+    """Undo :func:`set_active_usage_sink`."""
+    _ACTIVE_USAGE_SINK.reset(token)
 
 
 def get_llm(llm_provider: str, **kwargs):
@@ -188,8 +203,9 @@ async def create_chat_completion(
 
         # A provider can bill a completed request that returns empty content
         # after spending its budget on reasoning, so account for every call.
+        sink = usage_sink or _ACTIVE_USAGE_SINK.get()
         llm_costs = 0.0
-        if cost_callback or usage_sink:
+        if cost_callback or sink:
             llm_costs = calculate_llm_cost(
                 llm_provider=llm_provider,
                 model=model,
@@ -201,9 +217,9 @@ async def create_chat_completion(
             )
         if cost_callback:
             cost_callback(llm_costs)
-        if usage_sink:
+        if sink:
             _report_usage(
-                usage_sink,
+                sink,
                 provider=provider,
                 llm_provider=llm_provider,
                 model=model,
