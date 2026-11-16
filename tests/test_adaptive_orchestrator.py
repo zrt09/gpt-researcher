@@ -127,15 +127,16 @@ def _tasks(n=2):
 
 
 def build(**kwargs) -> AdaptiveResearcher:
+    query = kwargs.pop("query", "q")
     kwargs.setdefault("planner", FakePlanner(_tasks()))
     kwargs.setdefault("executor", FakeExecutor())
     kwargs.setdefault("writer", FakeWriter())
-    return AdaptiveResearcher("q", persist=False, **kwargs)
+    return AdaptiveResearcher(query, persist=False, **kwargs)
 
 
 async def test_first_round_quality_met_completes():
     evaluator = FakeEvaluator([make_evaluation(True, coverage=1.0)])
-    adaptive = build(evaluator=evaluator)
+    adaptive = build(evaluator=evaluator, query="2026年诺贝尔物理学奖得主")
 
     result = await adaptive.run()
 
@@ -148,10 +149,24 @@ async def test_first_round_quality_met_completes():
     assert result.report.index("## References") > result.report.index("研究质量自检")
 
 
+async def test_appendix_follows_the_report_language():
+    evaluator = FakeEvaluator([make_evaluation(True, coverage=1.0)])
+    adaptive = build(evaluator=evaluator, query="Who won the 2026 Nobel Prize in Physics?")
+
+    result = await adaptive.run()
+
+    assert "Appendix: Quality Self-Check" in result.report
+    assert "研究质量自检" not in result.report
+
+
 async def test_supplement_adds_tasks_and_next_round_can_pass():
     evaluator = FakeEvaluator(
         [
-            make_evaluation(False, coverage=0.5, deficits=[Deficit(kind="missing_coverage", description="T2 missing", task_id="T2")]),
+            make_evaluation(
+                False,
+                coverage=0.5,
+                deficits=[Deficit(kind="broken_citation", description="citation url dead")],
+            ),
             make_evaluation(True, coverage=1.0),
         ]
     )
@@ -169,7 +184,7 @@ async def test_supplement_adds_tasks_and_next_round_can_pass():
 
 async def test_budget_exhaustion_yields_partial_with_full_appendix():
     evaluator = FakeEvaluator([make_evaluation(False, coverage=0.3)])
-    adaptive = build(evaluator=evaluator, max_rounds=1)
+    adaptive = build(evaluator=evaluator, max_rounds=1, query="研究问题：RAG 的局限")
 
     result = await adaptive.run()
 
