@@ -26,6 +26,8 @@ from .executor import ResearchExecutor
 from .planner import Planner
 from .reflection import Action, ReflectionEngine
 from .report import build_final_report
+from .textutil import detect_language
+from .writer_v2 import StructuredWriter
 from .state import (
     BudgetState,
     EvaluationResult,
@@ -54,6 +56,7 @@ DEFAULT_ROLE_PROMPT = (
 )
 
 WriterCall = Callable[[ResearchState, list[str]], Awaitable[str]]
+
 
 
 @dataclass
@@ -122,7 +125,8 @@ class AdaptiveResearcher:
         self.prompt_family = get_prompt_family(
             getattr(self.cfg, "prompt_family", "default"), self.cfg
         )
-        self.writer: WriterCall = writer or self._default_writer
+        self.writer: WriterCall = writer or StructuredWriter(self.cfg, self.prompt_family)
+        self._custom_writer = writer is not None
         # A fixed role lets every sub-task skip its own choose_agent LLM call.
         # (One call per task is pure overhead when the parent already knows the
         # domain; the adaptive loop can still override these explicitly.)
@@ -328,18 +332,22 @@ class AdaptiveResearcher:
         return added
 
     async def _write(self) -> str:
-        try:
-            report = await self.writer(self.state, list(self._pending_notes))
-        except Exception as exc:  # noqa: BLE001 - keep the previous report
-            logger.error("adaptive writer failed: %s", exc)
-            report = self.state.report or ""
-        if report.strip():
-            return report
+        attempts: list[tuple[str, Any]] = [("structured", self.writer)]
+        if not self._custom_writer:
+            attempts.append(("one-shot", self._legacy_writer))
+        for name, writer in attempts:
+            try:
+                report = await writer(self.state, list(self._pending_notes))
+            except Exception as exc:  # noqa: BLE001 - fall through to the next writer
+                logger.warning("%s writer failed: %s", name, exc)
+                continue
+            if report and report.strip():
+                return report
         # Never hand an empty report to the evaluator: a deterministic digest of
         # the collected evidence is degraded, but it is honest and it keeps the
         # run's stop reason meaningful.
         self._writer_degraded = True
-        logger.warning("adaptive writer produced no text; using evidence digest")
+        logger.warning("all writers produced no text; using evidence digest")
         return self._digest_report(self.state)
 
     @staticmethod
@@ -368,7 +376,7 @@ class AdaptiveResearcher:
         lines += [f"- {url}" for url in urls[:40]] or ["- （无）"]
         return "\n".join(lines)
 
-    async def _default_writer(self, state: ResearchState, notes: list[str]) -> str:
+    async def _legacy_writer(self, state: ResearchState, notes: list[str]) -> str:
         from ..actions.report_generation import generate_report
 
         attempts = ((24, 600), (10, 400))
@@ -460,6 +468,7 @@ class AdaptiveResearcher:
             status,
             state.stop_reason,
             budget=self.budget,
+            language=detect_language(state.query),
         )
         if self.persist:
             if self.directory is None:
