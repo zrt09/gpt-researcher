@@ -17,9 +17,11 @@ def test_adaptive_default_values():
     assert cfg.adaptive_max_tokens == 300000
     assert cfg.adaptive_max_seconds == 900
     assert cfg.adaptive_eval_mode == "light"
-    assert cfg.adaptive_min_coverage == pytest.approx(0.80)
+    assert cfg.adaptive_min_coverage == pytest.approx(0.70)
     assert cfg.adaptive_min_support_rate == pytest.approx(0.85)
     assert cfg.adaptive_no_progress_rounds == 2
+    assert cfg.adaptive_max_tasks == 6
+    assert cfg.adaptive_plan_tasks == 5
     assert cfg.adaptive_state_dir == "outputs/adaptive"
 
 

@@ -94,6 +94,33 @@ def test_coverage_accepts_a_cited_source_from_the_task():
     assert "T1" not in metric.notes
 
 
+def test_coverage_matches_chinese_tasks_by_distinctive_terms():
+    tasks = [
+        SubTask(id="T1", query="2026年诺贝尔物理学奖获奖者", goal="答案必须列出获奖者姓名", status=TaskStatus.DONE),
+        SubTask(id="T2", query="该奖成果的科学意义", goal="答案必须说明科学意义", status=TaskStatus.DONE),
+        SubTask(id="T3", query="官方公告与颁奖信息", goal="答案必须给出官方公告时间", status=TaskStatus.DONE),
+        SubTask(id="T4", query="学界与媒体反响", goal="答案必须提供学界与媒体反响", status=TaskStatus.DONE),
+        SubTask(id="T5", query="冰立方中微子天文台", goal="答案必须介绍冰立方项目", status=TaskStatus.DONE),
+    ]
+    sections = [
+        "获奖者与官方信息",
+        "颁奖公告与奖项定位",
+        "冰立方中微子天文台项目",
+        "学界与媒体反响",
+        "该成果的科学意义与影响",
+    ]
+    claims = [
+        Claim(id=f"C{i}", text=f"{title}的具体内容说明。", section=title)
+        for i, title in enumerate(sections, start=1)
+    ]
+    state = ResearchState(run_id="r", query="2026年诺贝尔物理学奖", plan=tasks)
+
+    metric = compute_coverage(state, claims)
+
+    assert metric.value is not None
+    assert metric.value >= 0.8, metric.notes
+
+
 def test_citation_match_uses_normalized_urls():
     claims = [
         Claim(id="C1", text="t", section="s", cited_urls=["https://a.com/x/"]),
@@ -119,6 +146,33 @@ def test_completeness_reports_missing_parts():
     metric = compute_completeness(report)
     assert metric.value is not None and metric.value < 1.0
     assert "body" in metric.notes or "conclusion" in metric.notes
+
+
+def test_completeness_accepts_executive_summary_as_intro():
+    report = (
+        "# Title\n\n"
+        "## Executive Summary\n\nShort summary of the findings. https://a.com/x\n\n"
+        "## Findings one\n\n" + "word " * 40 + " https://a.com/x\n\n"
+        "## Findings two\n\n" + "word " * 40 + " https://b.com/y\n\n"
+        "## Conclusion\n\nDone. https://a.com/x\n\n"
+        "## References\n\n- https://a.com/x\n"
+    )
+    metric = compute_completeness(report)
+    assert metric.value == 1.0
+    assert "intro" not in metric.notes
+
+
+def test_completeness_accepts_chinese_sections():
+    report = (
+        "# 标题\n\n"
+        "## 摘要\n\n这是摘要。https://a.com/x\n\n"
+        "## 研究发现一\n\n" + "内容 " * 60 + " https://a.com/x\n\n"
+        "## 研究发现二\n\n" + "内容 " * 60 + " https://b.com/y\n\n"
+        "## 结论\n\n结束。https://a.com/x\n\n"
+        "## 参考文献\n\n- https://a.com/x\n"
+    )
+    metric = compute_completeness(report)
+    assert metric.value == 1.0
 
 
 def test_freshness_only_counts_dated_evidence():

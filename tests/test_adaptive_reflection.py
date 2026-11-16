@@ -153,3 +153,18 @@ def test_no_deficits_falls_back_to_finish():
     decision = ReflectionEngine().decide(ev, state(), budget())
     assert decision.action is Action.FINISH
     assert decision.stop_reason is StopReason.NO_PROGRESS
+
+
+def test_missing_coverage_on_done_tasks_rewrites_instead_of_researching():
+    plan = [
+        SubTask(id="T1", query="q1", goal="g1", status=TaskStatus.DONE, attempts=1),
+        SubTask(id="T2", query="q2", goal="g2", status=TaskStatus.DONE, attempts=1),
+    ]
+    ev = evaluation(coverage=0.4, citation_match_url=1.0, completeness=1.0)
+    ev.deficits = [
+        Deficit(kind="missing_coverage", description="T1 missing", task_id="T1"),
+        Deficit(kind="missing_coverage", description="T2 missing", task_id="T2"),
+    ]
+    decision = ReflectionEngine().decide(ev, state(plan=plan), budget())
+    assert decision.action is Action.REWRITE
+    assert decision.rewrite_notes

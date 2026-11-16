@@ -23,6 +23,7 @@ from .state import SubTask, TaskOrigin, TaskStatus
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_TASKS = 6
+DEFAULT_PLAN_TASKS = 5
 DEDUPE_THRESHOLD = 85.0
 # Ordered longest-first so "有哪些" is removed before "哪些".
 _CJK_FILLERS = (
@@ -66,6 +67,8 @@ class Planner:
         self._llm_call = llm_call
         configured = int(getattr(self.cfg, "adaptive_max_tasks", DEFAULT_MAX_TASKS))
         self.max_tasks = int(max_tasks or configured or DEFAULT_MAX_TASKS)
+        plan_tasks = int(getattr(self.cfg, "adaptive_plan_tasks", DEFAULT_PLAN_TASKS))
+        self.plan_tasks = max(1, min(plan_tasks, self.max_tasks))
 
     # ------------------------------------------------------------------ llm
     async def _complete(self, prompt: str) -> str:
@@ -81,15 +84,15 @@ class Planner:
 
     # ----------------------------------------------------------------- plan
     async def initial_plan(self, query: str) -> list[SubTask]:
-        """Return 1..max_tasks sub-tasks for ``query`` (never empty)."""
-        prompt = self.prompt_family.generate_plan_prompt(query, self.max_tasks)
+        """Return 1..plan_tasks sub-tasks for ``query`` (never empty)."""
+        prompt = self.prompt_family.generate_plan_prompt(query, self.plan_tasks)
         try:
             response = await self._complete(prompt)
         except Exception as exc:  # noqa: BLE001 - a bad LLM call must not kill the run
             logger.warning("adaptive planner LLM call failed: %s", exc)
             return self._fallback_plan(query)
 
-        tasks = self.parse_plan(response, limit=self.max_tasks)
+        tasks = self.parse_plan(response, limit=self.plan_tasks)
         if not tasks:
             logger.warning("adaptive planner produced no usable tasks; using fallback")
             return self._fallback_plan(query)

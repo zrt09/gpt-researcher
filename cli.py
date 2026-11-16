@@ -254,6 +254,16 @@ def _build_frontmatter(
     lines.append(f"created_at: {_yaml_quote(datetime.now().isoformat(timespec='seconds'))}")
     lines.append(f"sources_count: {sources_count}")
     lines.append(f"total_cost_usd: {total_cost}")
+    adaptive_result = getattr(args, "_adaptive_result", None)
+    if adaptive_result is not None:
+        lines.append("adaptive: true")
+        lines.append(f"adaptive_rounds: {adaptive_result.state.budget.rounds}")
+        lines.append(f"adaptive_status: {_yaml_quote(adaptive_result.status.value)}")
+        stop_reason = adaptive_result.stop_reason
+        lines.append(f"adaptive_stop_reason: {_yaml_quote(stop_reason.value if stop_reason else '')}")
+        lines.append(
+            f"quality_passed: {'true' if adaptive_result.evaluation and adaptive_result.evaluation.passed else 'false'}"
+        )
     lines.append("---")
     lines.append("")
     return "\n".join(lines)
@@ -298,6 +308,9 @@ async def main(args):
         result = await adaptive.run()
         report = result.report
         print(f"Adaptive run finished: status={result.status.value} reason={result.stop_reason}")
+        # Frontmatter helpers expect a report_type; be explicit instead of "None".
+        args.report_type = "adaptive_research"
+        args._adaptive_result = result
         # The CLI title/frontmatter helpers only need cfg, costs and visited URLs.
         researcher = SimpleNamespace(
             cfg=adaptive.cfg,

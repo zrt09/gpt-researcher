@@ -279,6 +279,7 @@ Split it into at most {max_tasks} independent research sub-tasks. For each sub-t
 - "goal": one sentence describing what a satisfactory answer must contain, so a reviewer can verify whether the sub-task was covered
 
 Rules:
+- **Write both "query" and "goal" in the same language as the question** (Chinese question -> Chinese query and goal).
 - Each sub-task must cover a different aspect; do not repeat the same angle.
 - At least one sub-task must address the question's overall framing.
 - Assume the current date is {today} when freshness matters.

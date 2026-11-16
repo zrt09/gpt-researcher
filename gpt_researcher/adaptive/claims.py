@@ -25,13 +25,59 @@ MAX_CLAIMS_PER_SECTION = 12
 MIN_CLAIM_CHARS = 20
 TASK_ATTRIBUTION_THRESHOLD = 65.0
 MAX_TASKS_PER_CLAIM = 2
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+
+
+def _bigrams(text: str) -> set[str]:
+    cleaned = re.sub(r"[^\w\u4e00-\u9fff]+", "", (text or "").lower())
+    if len(cleaned) < 2:
+        return {cleaned} if cleaned else set()
+    return {cleaned[i : i + 2] for i in range(len(cleaned) - 1)}
+
+
+def text_similarity(left: str, right: str) -> float:
+    """0..100 lexical similarity that also works for Chinese.
+
+    ``token_set_ratio`` is meaningless for Chinese (no spaces), so character
+    bigrams are used as an additional signal.
+    """
+    a = (left or "").strip().lower()
+    b = (right or "").strip().lower()
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return 100.0
+    score = float(fuzz.token_set_ratio(a, b))
+    if _CJK_RE.search(a) or _CJK_RE.search(b):
+        grams_a, grams_b = _bigrams(a), _bigrams(b)
+        if grams_a and grams_b:
+            # Dice coefficient copes with Chinese text where one string is a
+            # shorter paraphrase of the other.
+            dice = 200.0 * len(grams_a & grams_b) / (len(grams_a) + len(grams_b))
+            score = max(score, dice)
+    return score
 
 _HEADING_RE = re.compile(r"^(?P<hashes>#{1,6})\s*(?P<title>.+?)\s*$")
-_URL_RE = re.compile(r"https?://[^\s<>\)\]\"']+")
-_SENTENCE_END = re.compile(r"(?<=[。！？；!?;])\s*|(?<=[.])\s+(?=[A-Z0-9(\"'])")
+_URL_RE = re.compile(r"https?://[^\s<>\)\]\"'，。；：！？、）】》＞\u4e00-\u9fff]+")
+_SENTENCE_END = re.compile(
+    r"(?<=[。！？；])\s*|(?<=[.!?;])\s+(?=[A-Z0-9(\"'\u4e00-\u9fff])"
+)
 _REFERENCE_TITLES = ("reference", "references", "参考文献", "参考来源", "引用来源", "sources")
-_INTRO_TITLES = ("introduction", "引言", "简介", "前言")
-_CONCLUSION_TITLES = ("conclusion", "结论", "总结", "结语")
+_INTRO_TITLES = (
+    "introduction",
+    "executive summary",
+    "summary",
+    "overview",
+    "abstract",
+    "背景",
+    "引言",
+    "简介",
+    "前言",
+    "摘要",
+    "概述",
+    "导言",
+)
+_CONCLUSION_TITLES = ("conclusion", "conclusions", "结论", "总结", "结语", "展望")
 _SKIP_PREFIXES = ("|", ">", "![", "[![")
 
 
@@ -86,7 +132,7 @@ def extract_urls(text: str) -> list[str]:
     seen: set[str] = set()
     urls: list[str] = []
     for raw in _URL_RE.findall(text or ""):
-        url = raw.rstrip(".,;:!?，。；：！？")
+        url = raw.rstrip(".,;:!?，。；：！？、）】》＞\"'")
         if url and url not in seen:
             seen.add(url)
             urls.append(url)
@@ -94,15 +140,19 @@ def extract_urls(text: str) -> list[str]:
 
 
 def _sentences(body: str) -> list[str]:
+    """Split a section body into raw sentence pieces (no cleaning yet).
+
+    Cleaning happens per piece, but URLs are extracted from the raw piece so
+    markdown emphasis stripping can never damage a URL.
+    """
     parts: list[str] = []
     for line in body.splitlines():
         stripped = line.strip()
         if not stripped:
             continue
         for piece in _SENTENCE_END.split(stripped):
-            cleaned = _clean(piece)
-            if cleaned:
-                parts.append(cleaned)
+            if piece.strip():
+                parts.append(piece)
     return parts
 
 
@@ -132,11 +182,13 @@ def _attribute(sentence: str, section_title: str, tasks: Sequence[SubTask]) -> l
     for task in tasks:
         if task.status is TaskStatus.SKIPPED:
             continue
+        goal = task.goal or ""
+        query = task.query or ""
         score = max(
-            fuzz.token_set_ratio(section_title.lower(), (task.goal or "").lower()),
-            fuzz.token_set_ratio(section_title.lower(), task.query.lower()),
-            fuzz.token_set_ratio(sentence.lower(), (task.goal or "").lower()),
-            fuzz.token_set_ratio(sentence.lower(), task.query.lower()),
+            text_similarity(section_title, goal),
+            text_similarity(section_title, query),
+            text_similarity(sentence, goal),
+            text_similarity(sentence, query),
         )
         if score >= TASK_ATTRIBUTION_THRESHOLD:
             scored.append((float(score), task.id))
@@ -157,7 +209,8 @@ def extract_claims(
         if is_reference_section(section.title) or section.level == 0:
             continue
         kept_in_section = 0
-        for sentence in _sentences(section.body):
+        for raw in _sentences(section.body):
+            sentence = _clean(raw)
             if not _is_candidate(sentence):
                 continue
             claims.append(
@@ -165,7 +218,7 @@ def extract_claims(
                     id=f"C{len(claims) + 1}",
                     text=sentence,
                     section=section.title,
-                    cited_urls=extract_urls(sentence),
+                    cited_urls=extract_urls(raw),
                     task_ids=_attribute(sentence, section.title, task_list),
                 )
             )

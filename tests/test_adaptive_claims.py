@@ -42,6 +42,14 @@ def test_extract_urls_dedupes_and_trims_punctuation():
     assert urls == ["https://a.com/x", "https://b.com/y"]
 
 
+def test_extract_urls_stops_at_chinese_punctuation():
+    text = "获奖信息来自 https://www.nobelprize.org/all-nobel-prizes-2026，另见 https://example.com/zh。"
+    assert extract_urls(text) == [
+        "https://www.nobelprize.org/all-nobel-prizes-2026",
+        "https://example.com/zh",
+    ]
+
+
 def test_extract_claims_skips_references():
     claims = extract_claims(REPORT)
     assert claims
@@ -69,6 +77,22 @@ def test_claim_attributes_to_matching_task():
     assert limitation_claims
     assert any("T1" in c.task_ids for c in limitation_claims)
     assert all("T2" not in c.task_ids for c in limitation_claims)
+
+
+def test_chinese_claims_attribute_to_chinese_tasks():
+    report = (
+        "## 获奖者与主要贡献\n\n"
+        "2026年诺贝尔物理学奖授予弗朗西斯·哈尔岑，表彰其在冰立方中微子天文台的开创性工作。"
+        " https://e.com/1\n"
+    )
+    tasks = [
+        SubTask(id="T1", query="2026诺贝尔物理学奖获奖者", goal="说明获奖者及其主要贡献"),
+        SubTask(id="T2", query="历年诺贝尔物理学奖趋势", goal="比较历年趋势"),
+    ]
+    claims = extract_claims(report, tasks)
+    assert claims
+    assert "T1" in claims[0].task_ids
+    assert "T2" not in claims[0].task_ids
 
 
 def test_skipped_tasks_are_not_attributed():
@@ -108,3 +132,15 @@ def test_markdown_links_keep_their_url():
     assert claims
     assert claims[0].cited_urls == ["https://arxiv.org/html/2401.05856v1"]
     assert "https://arxiv.org/html/2401.05856v1" in claims[0].text
+
+
+def test_urls_with_query_strings_and_underscores_survive_extraction():
+    report = (
+        "## 官方公告\n\n"
+        "新华社报道确认了该奖项的归属，详见[新华社](https://app.xinhuanet.com/news/article.html?articleId=abc123&x=1)"
+        "以及[搜狐](https://www.sohu.com/a/1096647151_120678874)。\n"
+    )
+    claims = extract_claims(report)
+    urls = [url for claim in claims for url in claim.cited_urls]
+    assert "https://app.xinhuanet.com/news/article.html?articleId=abc123&x=1" in urls
+    assert "https://www.sohu.com/a/1096647151_120678874" in urls

@@ -78,13 +78,41 @@ def _dedupe(values: Sequence[str]) -> list[str]:
 # --------------------------------------------------------------------- coverage
 
 
+def _grams(text: str, n: int = 3) -> set[str]:
+    cleaned = re.sub(r"[^\w\u4e00-\u9fff]+", "", (text or "").lower())
+    if len(cleaned) < n:
+        return {cleaned} if cleaned else set()
+    return {cleaned[i : i + n] for i in range(len(cleaned) - n + 1)}
+
+
+def _distinctive_task_grams(tasks: Sequence, n: int = 3) -> dict[str, set[str]]:
+    """3-grams per task, minus grams shared by most tasks (generic wording)."""
+    per_task = {
+        task.id: _grams(task.query, n) | _grams(task.goal, n) for task in tasks
+    }
+    frequency: dict[str, int] = {}
+    for grams in per_task.values():
+        for gram in grams:
+            frequency[gram] = frequency.get(gram, 0) + 1
+    cutoff = max(1, len(tasks) // 2)
+    return {
+        task_id: {gram for gram in grams if frequency[gram] <= cutoff}
+        for task_id, grams in per_task.items()
+    }
+
+
 def compute_coverage(state: ResearchState, claims: Sequence[Claim]) -> MetricResult:
     """Share of planned (non-skipped) tasks that are done AND answered.
 
-    A task counts as covered when either its id is attributed to a claim, or the
-    report cites a URL that this task actually collected. The URL path matters:
-    lexical attribution is a conservative lower bound, and a report section can
-    answer a task without reusing the task's wording.
+    A task counts as covered when any of these holds:
+
+    1. a claim was attributed to it lexically;
+    2. the report cites a URL that the task itself collected;
+    3. the report text contains a *distinctive* 3-gram of the task's query/goal.
+
+    The third rule exists because short Chinese section titles and long task
+    goals share few whole-string tokens; generic 3-grams ("the", "2026", "诺贝尔")
+    are filtered out by document frequency so this does not match everything.
     """
     tasks = [t for t in state.plan if t.status is not TaskStatus.SKIPPED]
     if not tasks:
@@ -95,15 +123,22 @@ def compute_coverage(state: ResearchState, claims: Sequence[Claim]) -> MetricRes
         if evidence.url:
             task_urls.setdefault(evidence.task_id, set()).add(normalize_url(evidence.url))
 
+    corpus = " ".join(f"{claim.section} {claim.text}" for claim in claims)
+    corpus_grams = _grams(corpus)
+    distinctive = _distinctive_task_grams(tasks)
+
     covered_ids: set[str] = set()
     for claim in claims:
         covered_ids.update(claim.task_ids)
         cited = {normalize_url(url) for url in claim.cited_urls}
-        if not cited:
-            continue
-        for task_id, urls in task_urls.items():
-            if cited & urls:
-                covered_ids.add(task_id)
+        if cited:
+            for task_id, urls in task_urls.items():
+                if cited & urls:
+                    covered_ids.add(task_id)
+
+    for task in tasks:
+        if distinctive.get(task.id, set()) & corpus_grams:
+            covered_ids.add(task.id)
 
     covered = [t for t in tasks if t.status is TaskStatus.DONE and t.id in covered_ids]
     uncovered = [t.id for t in tasks if t.id not in {c.id for c in covered}]

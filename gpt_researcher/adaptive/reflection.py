@@ -136,6 +136,14 @@ class ReflectionEngine:
         conflicts = [d for d in deficits if d.kind == "conflict"]
         structure = [d for d in deficits if d.kind == "incomplete_section"]
 
+        if missing and self._looks_like_writing_gap(missing, state):
+            return Decision(
+                action=Action.REWRITE,
+                reason="覆盖缺口出现在已完成任务上，属于写作侧问题，先重写而不是继续检索",
+                addressed=missing,
+                rewrite_notes=[d.description for d in missing],
+            )
+
         if self._needs_replan(missing, state):
             return Decision(
                 action=Action.REPLAN,
@@ -192,6 +200,17 @@ class ReflectionEngine:
             reason="无缺陷可处理且未达标，停止以免空转",
             stop_reason=StopReason.NO_PROGRESS,
         )
+
+    @staticmethod
+    def _looks_like_writing_gap(missing: Sequence[Deficit], state: ResearchState) -> bool:
+        """All missing-coverage tasks already ran but did not make it into the text."""
+        if not missing:
+            return False
+        for deficit in missing:
+            task = state.task_by_id(deficit.task_id) if deficit.task_id else None
+            if task is None or task.status is not TaskStatus.DONE:
+                return False
+        return True
 
     @staticmethod
     def _needs_replan(missing: Sequence[Deficit], state: ResearchState) -> bool:
