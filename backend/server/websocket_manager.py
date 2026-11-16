@@ -159,6 +159,31 @@ async def run_agent(task, report_type, report_source, source_urls, document_urls
         )
         report = await researcher.run()
         
+    elif report_type == "adaptive":
+        # Adaptive loop: plan -> research -> evaluate -> reflect -> supplement.
+        # Progress is streamed as ordinary ``logs`` messages so the classic UI
+        # needs no JavaScript changes; the report arrives once at the end.
+        # Imported lazily so the classic-only import path (and its module stubs)
+        # does not depend on the adaptive package.
+        from backend.report_type.adaptive_report import AdaptiveReport
+
+        researcher = AdaptiveReport(
+            query=task,
+            report_type=report_type,
+            report_source=report_source,
+            tone=tone,
+            config_path=config_path,
+            websocket=logs_handler,
+            headers=headers,
+            query_domains=query_domains,
+            source_urls=source_urls,
+            document_urls=document_urls,
+            mcp_configs=mcp_configs if mcp_enabled else None,
+            mcp_strategy=mcp_strategy if mcp_enabled else None,
+            max_search_results=max_search_results,
+        )
+        report = await researcher.run()
+
     else:
         researcher = BasicReport(
             query=task,
