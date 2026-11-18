@@ -34,9 +34,6 @@ jobs:
           - image: gpt-researcher
             context: .
             file: Dockerfile
-          - image: gpt-researcher-frontend-nextjs
-            context: frontend/nextjs
-            file: frontend/nextjs/Dockerfile
     steps:
       - uses: actions/checkout@v5
 
