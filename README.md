@@ -1,3 +1,5 @@
+> **Fork notice**：这是 [GPT Researcher](https://github.com/assafelovic/gpt-researcher) 的 Fork，新增 **Adaptive & Reliable Research Agent**。中文安装、运行、配置和截图见 [README_ADAPTIVE.md](README_ADAPTIVE.md)。
+
 <div align="center" id="top">
 
 <img src="https://raw.githubusercontent.com/assafelovic/gpt-researcher/main/docs/static/img/gptr-logo-tile.png" alt="GPT Researcher logo" width="80">

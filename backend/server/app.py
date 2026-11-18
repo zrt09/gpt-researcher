@@ -96,11 +96,6 @@ async def lifespan(app: FastAPI):
 # App initialization
 app = FastAPI(lifespan=lifespan)
 
-# Built-in adaptive research UI (no Node/npm required): /adaptive-ui
-from server.adaptive_ui import router as adaptive_ui_router
-
-app.include_router(adaptive_ui_router)
-
 # Configure allowed origins for CORS
 allowed_origins_env = os.getenv("CORS_ALLOW_ORIGINS")
 ALLOWED_ORIGINS = (
