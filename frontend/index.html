@@ -172,7 +172,7 @@
                     <option value="deep">Deep Research</option>
                 </select>
             </div>
-            <div class="form-group">
+            <div class="form-group" id="toneGroup">
                 <label for="tone" class="agent-question">In which tone would you like the report to be
                     generated?</label>
                 <select name="tone" id="tone" class="form-control highlight-connection" required>
@@ -207,7 +207,7 @@
                     </option>
                 </select>
             </div>
-            <div class="form-group">
+            <div class="form-group" id="reportSourceGroup">
                 <label for="report_source" class="agent-question">What sources would you like me to research
                     from?</label>
                 <p class="text-left mt-0 pt-0" style="font-size: 0.7rem;">You can now do research on local documents as
@@ -228,6 +228,29 @@
                 <label for="queryDomains" class="form-label">Query Domains (Optional)</label>
                 <input type="text" class="form-control highlight-connection" id="queryDomains" name="query_domains" placeholder="Enter domains separated by commas" autocomplete="on">
                 <small class="text-muted">Example: techcrunch.com, forbes.com</small>
+            </div>
+
+            <!-- Adaptive research options (visible only when report_type = adaptive) -->
+            <div id="adaptiveOptions" style="display: none;">
+                <div class="form-group">
+                    <label for="adaptiveRounds" class="agent-question">How many research rounds at most?</label>
+                    <select id="adaptiveRounds" name="adaptive_rounds" class="form-control highlight-connection">
+                        <option value="1">1 - Fast（只跑一轮）</option>
+                        <option value="2">2</option>
+                        <option value="3" selected>3 - Balanced（默认）</option>
+                        <option value="4">4</option>
+                        <option value="5">5 - Thorough（更彻底）</option>
+                    </select>
+                    <small class="text-muted">Each round plans, researches and evaluates; stops early once quality passes.</small>
+                </div>
+                <div class="form-group">
+                    <label for="adaptiveEvalMode" class="agent-question">Quality evaluation mode</label>
+                    <select id="adaptiveEvalMode" name="adaptive_eval_mode" class="form-control highlight-connection">
+                        <option value="light" selected>light - Fast, no extra model calls（默认）</option>
+                        <option value="full">full - Adds claim support &amp; conflict judging（更严格，成本更高）</option>
+                    </select>
+                    <small class="text-muted">full mode adds 5-8 model calls per round.</small>
+                </div>
             </div>
 
             <!-- MCP Configuration Section -->

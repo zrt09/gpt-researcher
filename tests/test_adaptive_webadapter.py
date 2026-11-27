@@ -142,12 +142,15 @@ async def test_run_agent_routes_adaptive(monkeypatch):
     from gpt_researcher.utils.enum import Tone
 
     report = await wm.run_agent(
-        "q", "adaptive", "web", [], [], Tone.Objective, FakeWebSocket()
+        "q", "adaptive", "web", [], [], Tone.Objective, FakeWebSocket(),
+        adaptive_rounds=2, adaptive_eval_mode="full",
     )
 
     assert report == "# adaptive report"
     assert captured["report_type"] == "adaptive"
     assert captured["query"] == "q"
+    assert captured["max_rounds"] == 2
+    assert captured["eval_mode"] == "full"
 
 
 def test_frontend_offers_adaptive_option():
@@ -155,3 +158,103 @@ def test_frontend_offers_adaptive_option():
 
     html = Path("frontend/index.html").read_text(encoding="utf-8")
     assert 'value="adaptive"' in html
+    assert 'id="adaptiveRounds"' in html
+    assert 'id="adaptiveEvalMode"' in html
+    assert 'id="toneGroup"' in html
+    assert 'id="reportSourceGroup"' in html
+    assert 'id="adaptiveOptions"' in html
+
+
+def test_frontend_script_sends_adaptive_controls():
+    from pathlib import Path
+
+    js = Path("frontend/scripts.js").read_text(encoding="utf-8")
+    assert "syncAdaptiveFields" in js
+    assert "adaptive_rounds" in js
+    assert "adaptive_eval_mode" in js
+
+
+async def test_adapter_forwards_domains_and_site_limit(monkeypatch):
+    captured = {}
+
+    class CaptureResearcher(FakeResearcher):
+        def __init__(self, query, **kwargs):
+            captured.update(kwargs)
+            super().__init__(query, **kwargs)
+
+    monkeypatch.setattr("gpt_researcher.adaptive.AdaptiveResearcher", CaptureResearcher)
+    adapter = AdaptiveReport(
+        query="q",
+        websocket=FakeWebSocket(),
+        query_domains=["nobelprize.org"],
+        max_search_results=3,
+        max_rounds=2,
+        eval_mode="light",
+    )
+
+    await adapter.run()
+    await asyncio.sleep(0)
+
+    assert captured["query_domains"] == ["nobelprize.org"]
+    assert captured["max_search_results"] == 3
+    assert captured["max_rounds"] == 2
+    assert captured["eval_mode"] == "light"
+
+
+def test_adapter_clamps_browser_values():
+    adapter = AdaptiveReport(
+        query="q",
+        max_rounds=99,
+        eval_mode="bogus",
+        max_search_results=0,
+    )
+    assert adapter.max_rounds == 5
+    assert adapter.eval_mode is None
+    assert adapter.max_search_results == 1
+
+    adapter2 = AdaptiveReport(query="q", max_rounds=0, max_search_results="abc")
+    assert adapter2.max_rounds == 1
+    assert adapter2.max_search_results is None
+
+
+def test_extract_command_data_includes_adaptive_fields():
+    from backend.server.server_utils import extract_command_data
+
+    fields = extract_command_data(
+        {
+            "task": "q",
+            "report_type": "adaptive",
+            "adaptive_rounds": 2,
+            "adaptive_eval_mode": "full",
+        }
+    )
+
+    assert len(fields) == 14
+    assert fields[-2] == 2
+    assert fields[-1] == "full"
+
+
+def test_executor_applies_domains_and_site_limit(monkeypatch):
+    from gpt_researcher.adaptive.executor import ResearchExecutor
+    from gpt_researcher.adaptive.state import SubTask
+
+    captured = {}
+
+    class FakeCfg:
+        max_search_results_per_query = 5
+
+    class FakeGPT:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self.cfg = FakeCfg()
+
+    monkeypatch.setattr("gpt_researcher.agent.GPTResearcher", FakeGPT)
+
+    executor = ResearchExecutor(
+        query_domains=["nature.com", "science.org"], max_search_results=2
+    )
+    task = SubTask(id="T1", query="q", goal="g")
+    researcher = executor._default_factory(task=task, config_path=None)
+
+    assert captured["query_domains"] == ["nature.com", "science.org"]
+    assert researcher.cfg.max_search_results_per_query == 2

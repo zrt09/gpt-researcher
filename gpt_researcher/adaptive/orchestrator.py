@@ -87,6 +87,8 @@ class AdaptiveResearcher:
         writer: WriterCall | None = None,
         max_rounds: int | None = None,
         eval_mode: str | None = None,
+        query_domains: list[str] | None = None,
+        max_search_results: int | None = None,
         state_dir: str | None = None,
         persist: bool = True,
         budget_overrides: dict[str, Any] | None = None,
@@ -98,6 +100,8 @@ class AdaptiveResearcher:
         self.observer = observer
         self.persist = persist
         self.eval_mode = eval_mode or str(getattr(self.cfg, "adaptive_eval_mode", "light"))
+        self.query_domains = list(query_domains or [])
+        self.max_search_results = max_search_results
 
         budget = self._build_budget_state(budget_overrides or {}, max_rounds)
         self.state = ResearchState(
@@ -116,6 +120,8 @@ class AdaptiveResearcher:
             shared_visited_urls=self.state.visited_urls,
             usage_sink=self._record_usage,
             websocket=websocket,
+            query_domains=self.query_domains,
+            max_search_results=self.max_search_results,
         )
         if evaluator is None and self.eval_mode == "full":
             evaluator = ResearchEvaluator(self.cfg, judge=default_judge(self.cfg))

@@ -56,12 +56,16 @@ class ResearchExecutor:
         websocket: Any | None = None,
         researcher_factory: Callable[..., Any] | None = None,
         timeout_s: float | None = DEFAULT_TIMEOUT_S,
+        query_domains: list[str] | None = None,
+        max_search_results: int | None = None,
     ) -> None:
         self.cfg = cfg
         self.config_path = config_path
         self.shared_visited_urls = shared_visited_urls if shared_visited_urls is not None else set()
         self.usage_sink = usage_sink
         self.websocket = websocket
+        self.query_domains = list(query_domains or [])
+        self.max_search_results = max_search_results
         self.researcher_factory = researcher_factory or self._default_factory
         self.timeout_s = timeout_s
         self._evidence_seq = 0
@@ -222,13 +226,18 @@ class ResearchExecutor:
         from ..agent import GPTResearcher
 
         task: SubTask = kwargs["task"]
-        return GPTResearcher(
+        researcher = GPTResearcher(
             query=task.query,
             report_type=ReportType.ResearchReport.value,
             report_source=ReportSource.Web.value,
+            query_domains=self.query_domains or None,
             agent=kwargs.get("agent"),
             role=kwargs.get("role"),
             config_path=kwargs.get("config_path"),
             websocket=kwargs.get("websocket"),
             visited_urls=kwargs.get("visited_urls"),
         )
+        # Honour the UI's "websites per query" for every sub-research run.
+        if self.max_search_results:
+            researcher.cfg.max_search_results_per_query = int(self.max_search_results)
+        return researcher

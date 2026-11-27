@@ -22,6 +22,28 @@ const GPTResearcher = (() => {
   let maxReconnectAttempts = 5;
   let reconnectInterval = 2000; // Start with 2 seconds
 
+  // Adaptive mode swaps the classic tone/source selectors for round/eval controls.
+  // "Max websites per query" and "Query Domains" stay visible and are honoured.
+  const syncAdaptiveFields = () => {
+    const reportType = document.querySelector('select[name="report_type"]')
+    const isAdaptive = !!reportType && reportType.value === 'adaptive'
+    const toneGroup = document.getElementById('toneGroup')
+    const sourceGroup = document.getElementById('reportSourceGroup')
+    const adaptiveGroup = document.getElementById('adaptiveOptions')
+
+    if (toneGroup) toneGroup.style.display = isAdaptive ? 'none' : ''
+    if (sourceGroup) sourceGroup.style.display = isAdaptive ? 'none' : ''
+    if (adaptiveGroup) adaptiveGroup.style.display = isAdaptive ? 'block' : 'none'
+  }
+
+  const initAdaptiveFields = () => {
+    const reportType = document.querySelector('select[name="report_type"]')
+    if (reportType) {
+      reportType.addEventListener('change', syncAdaptiveFields)
+    }
+    syncAdaptiveFields()
+  }
+
   const init = () => {
     // Check if cookies are enabled
     checkCookiesEnabled();
@@ -62,6 +84,9 @@ const GPTResearcher = (() => {
 
     // Initialize MCP functionality
     initMCPSection();
+
+    // Show/hide adaptive-only fields based on the selected report type
+    initAdaptiveFields();
 
     // The download bar is now fixed in place with CSS
     // No need to set display property here
@@ -678,6 +703,9 @@ const GPTResearcher = (() => {
         formElement.scrollIntoView({ behavior: 'smooth' });
     }
 
+    // Keep the adaptive block in sync with the restored report type
+    syncAdaptiveFields();
+
     // Inform user
     showToast('Research parameters loaded. You can start the research again.');
   }
@@ -990,6 +1018,16 @@ const GPTResearcher = (() => {
         agent: agent,
         query_domains: query_domains,
         max_search_results: parseInt(document.getElementById('maxSearchResults').value, 10) || 5,
+      }
+
+      // Adaptive mode: send round/eval controls. Clamp defensively; the backend
+      // validates again so a hand-edited request cannot escape the bounds.
+      if (report_type === 'adaptive') {
+        const roundsSelect = document.getElementById('adaptiveRounds')
+        const evalSelect = document.getElementById('adaptiveEvalMode')
+        const rounds = parseInt(roundsSelect ? roundsSelect.value : '3', 10)
+        requestData.adaptive_rounds = Math.min(5, Math.max(1, rounds || 3))
+        requestData.adaptive_eval_mode = evalSelect && evalSelect.value === 'full' ? 'full' : 'light'
       }
 
       // Add MCP configuration if enabled

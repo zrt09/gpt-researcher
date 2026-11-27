@@ -45,6 +45,17 @@ DECISION_LABELS = {
 }
 
 
+def _clamp_int(value, low: int, high: int) -> int | None:
+    """Clamp a value coming from the browser; ``None``/garbage means "use config"."""
+    if value is None or value == "":
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return max(low, min(high, number))
+
+
 class AdaptiveReport:
     """Runs :class:`AdaptiveResearcher` and streams its progress to the UI."""
 
@@ -76,8 +87,9 @@ class AdaptiveReport:
         self.query_domains = query_domains or []
         self.source_urls = source_urls or []
         self.document_urls = document_urls or []
-        self.max_rounds = max_rounds
-        self.eval_mode = eval_mode
+        self.max_rounds = _clamp_int(max_rounds, 1, 5)
+        self.eval_mode = eval_mode if eval_mode in ("light", "full") else None
+        self.max_search_results = _clamp_int(max_search_results, 1, 20)
         # ``run_agent(return_researcher=True)`` expects this attribute.
         self.gpt_researcher = None
 
@@ -149,6 +161,8 @@ class AdaptiveReport:
                 observer=self._observe,
                 max_rounds=self.max_rounds,
                 eval_mode=self.eval_mode,
+                query_domains=self.query_domains,
+                max_search_results=self.max_search_results,
             )
         except Exception as exc:  # noqa: BLE001 - surface config errors in the UI
             logger.exception("adaptive researcher init failed")
@@ -156,10 +170,12 @@ class AdaptiveReport:
             return f"# 研究失败\n\n自适应研究初始化失败：{exc}\n"
 
         budget = researcher.state.budget
+        domains = "、".join(self.query_domains) if self.query_domains else "不限"
+        sites = self.max_search_results or "默认"
         await self._log(
             "starting_research",
-            f"🚀 自适应模式：最多 {budget.max_rounds} 轮、{budget.max_llm_calls} 次模型调用，"
-            f"评估模式 {researcher.eval_mode}",
+            f"🚀 自适应模式：最多 {budget.max_rounds} 轮、{budget.max_llm_calls} 次模型调用；"
+            f"每查询抓取 {sites} 个站点；域名 {domains}；评估模式 {researcher.eval_mode}",
         )
 
         try:
