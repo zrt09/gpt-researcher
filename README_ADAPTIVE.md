@@ -2,7 +2,7 @@
 
 > 基于 [GPT Researcher](https://github.com/assafelovic/gpt-researcher) 的自适应、可评估研究代理（Fork）。
 >
-> Python 包版本：`0.17.0+adaptive.1` ｜ Git 迭代标签：`adaptive-v1.2.0`
+> Python 包版本：`0.17.0+adaptive.1` ｜ Git 迭代标签：`adaptive-v1.3.1`
 
 本项目保留原版的检索、抓取、压缩、写作能力，并在外面新增一层
 “计划 → 执行 → 评估 → 反思 → 终止”的自适应研究循环。
@@ -10,17 +10,47 @@
 
 ## 界面与运行过程
 
-### 1. 选择 Adaptive 报告类型
+### 1. 选择 Adaptive，表单自动切换
 
-![选择 Adaptive 报告类型](docs/images/adaptive/01-report-type.jpg)
+选中 `Adaptive - 自适应研究` 后，原来的“语气 / 来源”两项会隐藏，替换为
+“最多轮次 / 评估模式”；“每查询抓取站点数”和 “Query Domains”保留，并且
+**真正作用于自适应检索**（见下方“网页控件一览”）。
+
+![选择 Adaptive 后表单切换](docs/images/adaptive/01-report-type.jpg)
 
 ### 2. 日志区显示轮次、子任务与指标
+
+启动时会把本轮实际生效的参数打进日志，例如：
+
+```text
+🚀 自适应模式：最多 2 轮、120 次模型调用；每查询抓取 3 个站点；域名 不限；评估模式 light
+🔄 第 1 轮研究开始
+```
+
+之后每轮结束会输出新增证据数与四项指标，并在最终给出停止原因与成本估算。
 
 ![运行日志](docs/images/adaptive/02-progress-logs.jpg)
 
 ### 3. 报告附录显示质量自检
 
+达标时附录只保留一行结论 + 指标表；未达标时会展开 5 段式缺口说明
+（停止原因、未达标指标、未解决任务、已知薄弱点、建议下一步）。
+
 ![质量自检附录](docs/images/adaptive/03-quality-appendix.jpg)
+
+### 4. 网页控件一览
+
+| 表单字段 | 原版模式 | Adaptive 模式 | 是否真正生效 |
+|---|---|---|---|
+| 语气 Tone | 显示 | 隐藏 | 否（自适应写作固定客观语气） |
+| 来源 Report Source | 显示 | 隐藏 | 否（自适应只做 Web 调研） |
+| 每查询抓取站点数 | 显示 | 显示 | **是**（每个子研究都使用该值） |
+| Query Domains | 显示 | 显示 | **是**（限定检索域名） |
+| 最多轮次 | — | 显示（1~5，默认 3） | **是** |
+| 评估模式 | — | 显示（light / full） | **是** |
+
+> 站点数建议保持 3~5：调到 2 会明显减少证据量（实测一轮约 19 条，默认约 30~40 条），
+> 更容易触发补研。`full` 评估模式每轮会多 5~8 次模型调用。
 
 ## 与原版的区别
 
@@ -93,8 +123,11 @@ python cli.py --adaptive --adaptive_rounds 2 "你的研究问题"
 
 # 网页：报告类型选择 “Adaptive - 自适应研究”
 python main.py
-# http://127.0.0.1:8000/
+# http://127.0.0.1:8000/  →  选 Adaptive 后填写轮次/评估模式即可
 ```
+
+> 网页表单会在选中 Adaptive 时自动切换：隐藏“语气/来源”，显示“最多轮次/评估模式”，
+> 同时保留并生效“每查询抓取站点数”和 “Query Domains”。切回其它类型立即恢复原样。
 
 > 早期版本曾提供 `/adaptive-ui` 独立调试页；最终交付版已移除，只保留原网页入口。
 
@@ -178,13 +211,14 @@ python -m pytest tests -k "adaptive" -q
 python -m pytest tests/ -q
 ```
 
-改造新增 175 个用例；全量收集 1075 个用例（含原项目既有测试）。
+改造新增 172 个用例；全量收集 1080 个用例（含原项目既有测试）。
 全量测试中存在两个原项目既有失败，与本次改造无关；
 详见 [`docs/改造方案/15_使用说明与已知问题.md`](docs/改造方案/15_使用说明与已知问题.md)。
 
 ## 已知限制
 
-- 自适应网页模式目前只走 Web 检索；原网页的 Tone、Sources、每查询抓取数、Query Domains、MCP 不会传入自适应流程。
+- 自适应网页模式只做 Web 检索：Tone 与 Sources 在选中 Adaptive 时会隐藏；
+  `每查询抓取站点数` 与 `Query Domains` 已生效；MCP 配置暂不传入自适应流程。
 - 写作语言只区分中文/英文；韩文等其他语言会回退为英文报告。
 - `ADAPTIVE_ENABLED` 是预留配置，代码中未读取；实际开关是 `--adaptive` / `report_type=adaptive`。
 - `light` 模式的覆盖度是词面启发式，中文同义改写可能漏判，属于保守下界。
@@ -199,7 +233,8 @@ python -m pytest tests/ -q
 gpt_researcher/adaptive/        # 自适应核心：状态、计划、执行、评估、反思、预算、写作、报告
 backend/report_type/adaptive_report/  # 原网页 Adaptive 报告适配器
 docs/改造方案/                  # 设计、实验、使用说明
-docs/images/adaptive/           # 运行截图
+docs/images/adaptive/           # 运行截图（随版本更新）
+docs/releases/                  # 各版本发布说明（可粘到 GitHub Release）
 tests/test_adaptive_*.py        # 改造功能测试
 ```
 
